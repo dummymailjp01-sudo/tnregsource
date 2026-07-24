@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Guideline Value Scraper...");
+    console.log("🚀 Starting TNREGINET Multi-Tab Aware Scraper...");
 
     const browser = await puppeteer.launch({
         headless: false, // Visible Chrome browser window
@@ -26,29 +26,20 @@ async function runScraper() {
             timeout: 120000 
         });
 
-        console.log("2️⃣ Clicking 'வழிகாட்டி மதிப்பு' (Guideline Value) in the menu...");
+        console.log("2️⃣ Clicking 'வழிகாட்டி மதிப்பு' in the menu...");
         await new Promise(r => setTimeout(r, 3000));
 
-        // Click the Guideline Value menu item on the homepage
-        const clickedMenu = await page.evaluate(() => {
+        await page.evaluate(() => {
             const allElements = Array.from(document.querySelectorAll('a, button, span, td, div'));
             const match = allElements.find(el => {
                 const txt = (el.innerText || '').trim();
                 return txt === 'வழிகாட்டி மதிப்பு' || txt.includes('வழிகாட்டி மதிப்பு விவரம்');
             });
-            if (match) {
-                match.click();
-                return match.innerText.trim();
-            }
-            return false;
+            if (match) match.click();
         });
 
-        console.log(`Menu clicked status: ${clickedMenu}`);
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Ensure we are on the search form with dropdowns
+        await new Promise(r => setTimeout(r, 4000));
         await page.waitForSelector('select', { timeout: 30000 });
-        console.log("✅ Successfully landed on Guideline Value Search Form!");
 
         // Ensure "Street" and "Village-wise" radio buttons are checked
         await page.evaluate(() => {
@@ -118,7 +109,9 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // Click Search
+        // Click Search and listen for new popup tab
+        const targetPromise = browser.waitForTarget(t => t.opener() === page.target(), { timeout: 5000 }).catch(() => null);
+
         const searchClicked = await page.evaluate(() => {
             const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
                 .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
@@ -130,10 +123,23 @@ async function runScraper() {
         });
 
         console.log(`Search button clicked: ${searchClicked}`);
-        await new Promise(r => setTimeout(r, 7000));
 
-        // Extract records from table
-        const records = await page.evaluate((vName) => {
+        // Check if a new tab opened or if navigation happened on current tab
+        const popupTarget = await targetPromise;
+        let activeResultsPage = page;
+
+        if (popupTarget) {
+            console.log("🌟 Search results opened in a NEW TAB!");
+            activeResultsPage = await popupTarget.page();
+            await activeResultsPage.bringToFront();
+        } else {
+            console.log("ℹ️ Search results loaded in the CURRENT TAB.");
+        }
+
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Extract records from the active results page (either current tab or popup tab)
+        const records = await activeResultsPage.evaluate((vName) => {
             const allTrs = document.querySelectorAll('tr');
             const list = [];
 
@@ -146,7 +152,7 @@ async function runScraper() {
                     let col3 = cols[3]?.innerText.trim() || '';
                     let col4 = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
 
-                    if (col0 !== 'வரிசை எண்' && col1 !== '') {
+                    if (col0 !== 'வரிசை எண்' && col1 !== '' && !col1.includes('தேடல்')) {
                         list.push(`"${vName}","${col1}","${col4}","${col2}","${col3}"`);
                     }
                 }
@@ -158,6 +164,16 @@ async function runScraper() {
         if (records.length > 0) {
             console.log("Sample Extracted Data:");
             records.forEach(r => console.log(`  -> ${r}`));
+        } else {
+            // Debug info if still 0
+            const debugText = await activeResultsPage.evaluate(() => document.body ? document.body.innerText.substring(0, 300) : 'empty');
+            console.log(`🔍 DEBUG: Active Page URL = "${activeResultsPage.url()}"`);
+            console.log(`🔍 DEBUG: Active Page Snippet = "${debugText.replace(/\n/g, ' ')}"`);
+        }
+
+        // Close popup tab if one was opened
+        if (popupTarget && activeResultsPage !== page) {
+            await activeResultsPage.close();
         }
 
     } catch (err) {
