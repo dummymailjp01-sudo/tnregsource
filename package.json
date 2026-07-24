@@ -1,0 +1,12 @@
+{
+  "name": "tnregsource",
+  "version": "1.0.0",
+  "description": "TNREGINET Bulk Guideline Value Data Scraper",
+  "main": "scraper.js",
+  "scripts": {
+    "start": "node scraper.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  }
+}
