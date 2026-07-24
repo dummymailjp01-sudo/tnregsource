@@ -1,0 +1,31 @@
+name: Run TNREGINET Scraper
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Scraper Script
+        run: node scraper.js
+
+      - name: Upload Scraped CSV Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Salem_SRO_Bulk_Extract
+          path: Salem_SRO_Bulk_Extract.csv
+          if-no-files-found: warn
