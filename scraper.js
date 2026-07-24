@@ -66,7 +66,7 @@ async function runScraper() {
         });
 
         await new Promise(r => setTimeout(r, 4000));
-        await page.waitForSelector('#cmb_zone, select', { timeout: 30000 });
+        await page.waitForSelector('select', { timeout: 30000 });
 
         // Ensure "Street" and "Village-wise" radio buttons are checked
         await page.evaluate(() => {
@@ -78,13 +78,14 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // 3. Select Zone (சேலம் / Salem) by ID #cmb_zone
+        // 3. Select Zone (சேலம் / Salem) by ID #cmb_zone or 1st select
         console.log("3️⃣ Selecting Zone (சேலம்)...");
         await page.evaluate(() => {
             const zEl = document.getElementById('cmb_zone') || document.querySelectorAll('select')[0];
             if (!zEl) return;
-            const opt = Array.from(zEl.options).find(o => o.text.includes('சேலம்'));
-            if (opt) {
+            const opts = zEl.tagName?.toLowerCase() === 'select' ? zEl.options : zEl.querySelectorAll('option');
+            const opt = Array.from(opts || []).find(o => o.text.includes('சேலம்'));
+            if (opt && zEl.tagName?.toLowerCase() === 'select') {
                 zEl.value = opt.value;
                 zEl.dispatchEvent(new Event('change'));
             }
@@ -99,9 +100,10 @@ async function runScraper() {
         await page.evaluate(() => {
             const sEl = document.getElementById('cmb_sub_registrar_office') || document.querySelectorAll('select')[1];
             if (!sEl) return;
-            const opt = Array.from(sEl.options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
-                        Array.from(sEl.options).find(o => o.value !== '-1' && o.value !== '');
-            if (opt) {
+            const opts = sEl.tagName?.toLowerCase() === 'select' ? sEl.options : sEl.querySelectorAll('option');
+            const opt = Array.from(opts || []).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
+                        Array.from(opts || []).find(o => o.value !== '-1' && o.value !== '');
+            if (opt && sEl.tagName?.toLowerCase() === 'select') {
                 sEl.value = opt.value;
                 sEl.dispatchEvent(new Event('change'));
             }
@@ -109,12 +111,17 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 5000));
 
-        // 5. Get Villages from DOM (#cmb_reg_village) OR from Intercepted XML
+        // 5. Get Villages safely from DOM OR from Intercepted XML
         let villageOptions = await page.evaluate(() => {
-            const vEl = document.getElementById('cmb_reg_village') || document.querySelectorAll('select')[2];
+            const selects = document.querySelectorAll('select');
+            const vEl = document.getElementById('cmb_reg_village') || selects[2] || selects[selects.length - 1];
             if (!vEl) return [];
-            return Array.from(vEl.options)
-                .filter(opt => opt.value !== '-1' && opt.value !== '')
+
+            const opts = vEl.tagName?.toLowerCase() === 'select' ? vEl.options : vEl.querySelectorAll('option');
+            if (!opts) return [];
+
+            return Array.from(opts)
+                .filter(opt => opt.value && opt.value !== '-1' && opt.value !== '')
                 .map(opt => ({ text: opt.text.trim(), value: opt.value }));
         });
 
@@ -142,10 +149,12 @@ async function runScraper() {
 
         // Select 1st village
         await page.evaluate((val) => {
-            const vEl = document.getElementById('cmb_reg_village') || document.querySelectorAll('select')[2];
-            if (!vEl) return;
-            vEl.value = val;
-            vEl.dispatchEvent(new Event('change'));
+            const selects = document.querySelectorAll('select');
+            const vEl = document.getElementById('cmb_reg_village') || selects[2] || selects[selects.length - 1];
+            if (vEl && vEl.tagName?.toLowerCase() === 'select') {
+                vEl.value = val;
+                vEl.dispatchEvent(new Event('change'));
+            }
         }, testVillage.value);
 
         await new Promise(r => setTimeout(r, 2000));
