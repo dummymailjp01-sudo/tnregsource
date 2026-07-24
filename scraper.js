@@ -1,20 +1,8 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-function parseOptionsFromXML(xmlString) {
-    const regex = /<option value=['"]([^'"]+)['"]>([^<]+)<\/option>/g;
-    const options = [];
-    let match;
-    while ((match = regex.exec(xmlString)) !== null) {
-        if (match[1] !== '-1' && match[1] !== '') {
-            options.push({ value: match[1], text: match[2].trim() });
-        }
-    }
-    return options;
-}
-
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Direct-URL Scraper...");
+    console.log("🚀 Starting TNREGINET Visual Debug Scraper...");
 
     const browser = await puppeteer.launch({
         headless: false, // Visible Chrome browser window
@@ -31,35 +19,18 @@ async function runScraper() {
     const page = pages.length > 0 ? pages[0] : await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-    let capturedXmls = [];
-
-    // Intercept webHP XML responses
-    page.on('response', async (response) => {
-        const url = response.url();
-        if (url.includes('webHP') || url.includes('GuidelineValue')) {
-            try {
-                const text = await response.text();
-                if (text && text.includes('<option')) {
-                    capturedXmls.push(text);
-                }
-            } catch (e) {}
-        }
-    });
-
     try {
-        // Direct URL to Guideline Value Search Page (Bypasses homepage completely!)
         console.log("1️⃣ Navigating DIRECTLY to Guideline Value Search Page...");
         await page.goto('https://tnreginet.gov.in/portal/GuidelineValueSearch.do?UserLocaleID=ta', { 
             waitUntil: 'domcontentloaded', 
             timeout: 120000 
         }).catch(async () => {
-            // Fallback URL if Search.do redirects
             await page.goto('https://tnreginet.gov.in/portal/GuidelineValue.do?UserLocaleID=ta', { waitUntil: 'domcontentloaded' });
         });
 
-        console.log("2️⃣ Waiting for Search Form Dropdowns...");
+        console.log("2️⃣ Waiting for Search Form...");
         await page.waitForSelector('select', { timeout: 30000 });
-        console.log("✅ Successfully landed DIRECTLY on Guideline Value Search Form!");
+        await new Promise(r => setTimeout(r, 2000));
 
         // Ensure "Street" and "Village-wise" radio buttons are checked
         await page.evaluate(() => {
@@ -76,9 +47,8 @@ async function runScraper() {
         await page.evaluate(() => {
             const zEl = document.getElementById('cmb_zone') || document.querySelectorAll('select')[0];
             if (!zEl) return;
-            const opts = zEl.tagName?.toLowerCase() === 'select' ? zEl.options : zEl.querySelectorAll('option');
-            const opt = Array.from(opts || []).find(o => o.text.includes('சேலம்'));
-            if (opt && zEl.tagName?.toLowerCase() === 'select') {
+            const opt = Array.from(zEl.options).find(o => o.text.includes('சேலம்'));
+            if (opt) {
                 zEl.value = opt.value;
                 zEl.dispatchEvent(new Event('change'));
             }
@@ -88,15 +58,12 @@ async function runScraper() {
 
         // 4. Select SRO (Sub-Registrar Office)
         console.log("4️⃣ Selecting Sub-Registrar Office (பெத்தநாயக்கன்பாளையம்)...");
-        capturedXmls = []; // Clear XML buffer to capture village XML
-        
         await page.evaluate(() => {
             const sEl = document.getElementById('cmb_sub_registrar_office') || document.querySelectorAll('select')[1];
             if (!sEl) return;
-            const opts = sEl.tagName?.toLowerCase() === 'select' ? sEl.options : sEl.querySelectorAll('option');
-            const opt = Array.from(opts || []).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
-                        Array.from(opts || []).find(o => o.value !== '-1' && o.value !== '');
-            if (opt && sEl.tagName?.toLowerCase() === 'select') {
+            const opt = Array.from(sEl.options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
+                        Array.from(sEl.options).find(o => o.value !== '-1' && o.value !== '');
+            if (opt) {
                 sEl.value = opt.value;
                 sEl.dispatchEvent(new Event('change'));
             }
@@ -104,35 +71,21 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 5000));
 
-        // 5. Get Villages safely from DOM OR from Intercepted XML
+        // 5. Get Villages safely from DOM
         let villageOptions = await page.evaluate(() => {
             const selects = document.querySelectorAll('select');
             const vEl = document.getElementById('cmb_reg_village') || selects[2] || selects[selects.length - 1];
-            if (!vEl) return [];
+            if (!vEl || !vEl.options) return [];
 
-            const opts = vEl.tagName?.toLowerCase() === 'select' ? vEl.options : vEl.querySelectorAll('option');
-            if (!opts) return [];
-
-            return Array.from(opts)
+            return Array.from(vEl.options)
                 .filter(opt => opt.value && opt.value !== '-1' && opt.value !== '')
                 .map(opt => ({ text: opt.text.trim(), value: opt.value }));
         });
 
-        // Fallback: Parse XML if DOM is not updated
-        if (villageOptions.length === 0 && capturedXmls.length > 0) {
-            console.log("📡 Extracting villages directly from intercepted XML response...");
-            for (let xml of capturedXmls) {
-                const parsed = parseOptionsFromXML(xml);
-                if (parsed.length > villageOptions.length) {
-                    villageOptions = parsed;
-                }
-            }
-        }
-
         console.log(`🤖 Found ${villageOptions.length} total villages. Testing ONLY Village 1...`);
 
         if (villageOptions.length === 0) {
-            console.log("⚠️ No villages found. Exiting.");
+            console.log("⚠️ No villages found in DOM. Exiting.");
             await browser.close();
             return;
         }
@@ -144,27 +97,41 @@ async function runScraper() {
         await page.evaluate((val) => {
             const selects = document.querySelectorAll('select');
             const vEl = document.getElementById('cmb_reg_village') || selects[2] || selects[selects.length - 1];
-            if (vEl && vEl.tagName?.toLowerCase() === 'select') {
+            if (vEl && vEl.options) {
                 vEl.value = val;
                 vEl.dispatchEvent(new Event('change'));
             }
         }, testVillage.value);
 
-        await new Promise(r => setTimeout(r, 2000));
+        // Wait 3 seconds for village change AJAX to settle
+        await new Promise(r => setTimeout(r, 3000));
 
         // Click Search
+        console.log("5️⃣ Clicking Search button...");
         const searchClicked = await page.evaluate(() => {
-            const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
+            // Check for explicit search functions or buttons
+            if (typeof fn_search === 'function') { fn_search(); return 'called fn_search()'; }
+            if (typeof search === 'function') { search(); return 'called search()'; }
+
+            const btn = Array.from(document.querySelectorAll('input, button, a'))
                 .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
             if (btn) {
                 btn.click();
-                return true;
+                return 'clicked button element';
             }
             return false;
         });
 
-        console.log(`Search button clicked: ${searchClicked}`);
-        await new Promise(r => setTimeout(r, 7000));
+        console.log(`Search action: ${searchClicked}`);
+        await new Promise(r => setTimeout(r, 8000));
+
+        // TAKE DEBUG SCREENSHOT AND RECORD TEXT
+        console.log("📸 Saving debug screenshot (debug_page.png)...");
+        await page.screenshot({ path: 'debug_page.png', fullPage: true });
+
+        const bodyText = await page.evaluate(() => document.body ? document.body.innerText : '');
+        fs.writeFileSync('debug_page.txt', bodyText, 'utf8');
+        console.log("📄 Saved page text to debug_page.txt");
 
         // Extract records from table
         const records = await page.evaluate((vName) => {
@@ -189,10 +156,6 @@ async function runScraper() {
         }, testVillage.text);
 
         console.log(`\n✅ Test Village Extraction Result: ${records.length} records extracted!`);
-        if (records.length > 0) {
-            console.log("Sample Extracted Data:");
-            records.forEach(r => console.log(`  -> ${r}`));
-        }
 
     } catch (err) {
         console.error("❌ Scraper error:", err);
