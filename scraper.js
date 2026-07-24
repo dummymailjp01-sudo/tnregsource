@@ -29,6 +29,16 @@ async function runScraper() {
         console.log("Page loaded successfully.");
         await page.waitForSelector('select', { timeout: 30000 });
 
+        // Ensure "Street" and "Village-wise" radio buttons are checked
+        await page.evaluate(() => {
+            const radios = document.querySelectorAll('input[type="radio"]');
+            if (radios.length > 0) radios[0].click(); // Select Street radio button
+            const villageRadio = Array.from(radios).find(r => (r.nextSibling?.textContent || r.parentElement?.textContent || '').includes('கிராம'));
+            if (villageRadio) villageRadio.click();
+        });
+
+        await new Promise(r => setTimeout(r, 2000));
+
         // 1. Select Zone (சேலம் / Salem)
         console.log("Selecting Zone (சேலம்)...");
         await page.evaluate(() => {
@@ -89,7 +99,7 @@ async function runScraper() {
             });
             await new Promise(r => setTimeout(r, 3000));
 
-            // Ensure Zone & SRO selections are preserved
+            // Ensure radio buttons, Zone & SRO selections are preserved
             await page.evaluate(() => {
                 const selects = document.querySelectorAll('select');
                 if (selects[0] && selects[0].selectedIndex <= 0) {
@@ -140,8 +150,18 @@ async function runScraper() {
                 continue;
             }
 
-            // Wait 6 seconds for table data to render completely
             await new Promise(r => setTimeout(r, 6000));
+
+            // DIAGNOSTIC LOGGING: Check what text Chrome is seeing on the screen
+            const debugInfo = await page.evaluate(() => {
+                return {
+                    url: window.location.href,
+                    bodySnippet: document.body.innerText.substring(0, 200).replace(/\n/g, ' '),
+                    trCount: document.querySelectorAll('tr').length,
+                    tableCount: document.querySelectorAll('table').length
+                };
+            });
+            console.log(`🔍 DEBUG [${currentVillage.text}]: URL="${debugInfo.url}" | Tables=${debugInfo.tableCount} | TRs=${debugInfo.trCount}`);
 
             // Extract records from any table row containing data cells
             const records = await page.evaluate((vName) => {
@@ -150,7 +170,6 @@ async function runScraper() {
 
                 allTrs.forEach((row) => {
                     const cols = row.querySelectorAll('td');
-                    // Data rows have at least 4 columns
                     if (cols.length >= 4) {
                         let col0 = cols[0]?.innerText.trim() || '';
                         let col1 = cols[1]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
@@ -158,7 +177,6 @@ async function runScraper() {
                         let col3 = cols[3]?.innerText.trim() || '';
                         let col4 = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
 
-                        // Filter out headers or empty rows
                         if (col0 !== 'வரிசை எண்' && col1 !== '' && !col1.includes('தேடல்')) {
                             list.push(`"${vName}","${col1}","${col4}","${col2}","${col3}"`);
                         }
