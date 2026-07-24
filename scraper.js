@@ -4,9 +4,8 @@ const fs = require('fs');
 async function runScraper() {
     console.log("🚀 Starting TNREGINET Scraper...");
 
-    // Launch Chrome in visible mode so you can see it working!
     const browser = await puppeteer.launch({
-        headless: false, 
+        headless: false, // Visible Chrome browser window
         defaultViewport: null,
         args: [
             '--no-sandbox',
@@ -82,45 +81,34 @@ async function runScraper() {
             const currentVillage = villageOptions[i];
             console.log(`⏳ [${i + 1}/${villageOptions.length}] Extracting: ${currentVillage.text}...`);
 
-            // Step A: If we are on the Results page, navigate back to Search Form
-            const hasBackBtn = await page.evaluate(() => {
+            // Step A: Go back to search form if on Results Page
+            await page.evaluate(() => {
                 const backBtn = Array.from(document.querySelectorAll('input, button, a'))
                     .find(b => (b.value || b.innerText || '').includes('முதன்மை பட்டியலுக்கு'));
-                return !!backBtn;
+                if (backBtn) backBtn.click();
             });
+            await new Promise(r => setTimeout(r, 3000));
 
-            if (hasBackBtn) {
-                await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
-                    page.evaluate(() => {
-                        const backBtn = Array.from(document.querySelectorAll('input, button, a'))
-                            .find(b => (b.value || b.innerText || '').includes('முதன்மை பட்டியலுக்கு'));
-                        if (backBtn) backBtn.click();
-                    })
-                ]);
-                await new Promise(r => setTimeout(r, 3000));
+            // Ensure Zone & SRO selections are preserved
+            await page.evaluate(() => {
+                const selects = document.querySelectorAll('select');
+                if (selects[0] && selects[0].selectedIndex <= 0) {
+                    const zOpt = Array.from(selects[0].options).find(o => o.text.includes('சேலம்'));
+                    if (zOpt) { selects[0].value = zOpt.value; selects[0].dispatchEvent(new Event('change')); }
+                }
+            });
+            await new Promise(r => setTimeout(r, 2000));
 
-                // Re-verify Zone and SRO dropdown selections
-                await page.evaluate(() => {
-                    const selects = document.querySelectorAll('select');
-                    if (selects[0] && selects[0].selectedIndex <= 0) {
-                        const zOpt = Array.from(selects[0].options).find(o => o.text.includes('சேலம்'));
-                        if (zOpt) { selects[0].value = zOpt.value; selects[0].dispatchEvent(new Event('change')); }
-                    }
-                });
-                await new Promise(r => setTimeout(r, 2000));
+            await page.evaluate(() => {
+                const selects = document.querySelectorAll('select');
+                if (selects[1] && selects[1].selectedIndex <= 0) {
+                    const sOpt = Array.from(selects[1].options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || selects[1].options[1];
+                    if (sOpt) { selects[1].value = sOpt.value; selects[1].dispatchEvent(new Event('change')); }
+                }
+            });
+            await new Promise(r => setTimeout(r, 2000));
 
-                await page.evaluate(() => {
-                    const selects = document.querySelectorAll('select');
-                    if (selects[1] && selects[1].selectedIndex <= 0) {
-                        const sOpt = Array.from(selects[1].options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || selects[1].options[1];
-                        if (sOpt) { selects[1].value = sOpt.value; selects[1].dispatchEvent(new Event('change')); }
-                    }
-                });
-                await new Promise(r => setTimeout(r, 2000));
-            }
-
-            // Step B: Select the current village
+            // Select current village
             const selected = await page.evaluate((val) => {
                 const selects = document.querySelectorAll('select');
                 if (!selects[2]) return false;
@@ -134,40 +122,45 @@ async function runScraper() {
                 continue;
             }
 
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 2000));
 
-            // Step C: Click Search and wait for page navigation to complete
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
-                page.evaluate(() => {
-                    const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
-                        .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
-                    if (btn) btn.click();
-                })
-            ]);
+            // Click Search
+            const searchClicked = await page.evaluate(() => {
+                const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
+                    .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            });
 
-            await new Promise(r => setTimeout(r, 3000));
+            if (!searchClicked) {
+                console.log(`⚠️ Could not click Search button for ${currentVillage.text}`);
+                continue;
+            }
 
-            // Step D: Extract table rows from the Results Page
+            // Wait 6 seconds for table data to render completely
+            await new Promise(r => setTimeout(r, 6000));
+
+            // Extract records from any table row containing data cells
             const records = await page.evaluate((vName) => {
-                const rows = document.querySelectorAll('table tr');
+                const allTrs = document.querySelectorAll('tr');
                 const list = [];
 
-                Array.from(rows).forEach((row) => {
+                allTrs.forEach((row) => {
                     const cols = row.querySelectorAll('td');
-                    // Check if this is a data row (has 5 or more columns)
-                    if (cols.length >= 5) {
-                        let col0Text = cols[0]?.innerText.trim() || '';
-                        // Skip header row
-                        if (col0Text.includes('வரிசை') || col0Text.includes('S.No')) return;
+                    // Data rows have at least 4 columns
+                    if (cols.length >= 4) {
+                        let col0 = cols[0]?.innerText.trim() || '';
+                        let col1 = cols[1]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
+                        let col2 = cols[2]?.innerText.trim() || '';
+                        let col3 = cols[3]?.innerText.trim() || '';
+                        let col4 = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
 
-                        let street = cols[1]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
-                        let valB = cols[2]?.innerText.trim() || '';
-                        let valM = cols[3]?.innerText.trim() || '';
-                        let cls = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
-
-                        if (street) {
-                            list.push(`"${vName}","${street}","${cls}","${valB}","${valM}"`);
+                        // Filter out headers or empty rows
+                        if (col0 !== 'வரிசை எண்' && col1 !== '' && !col1.includes('தேடல்')) {
+                            list.push(`"${vName}","${col1}","${col4}","${col2}","${col3}"`);
                         }
                     }
                 });
