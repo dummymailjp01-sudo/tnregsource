@@ -2,10 +2,10 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Scraper...");
+    console.log("🚀 Starting TNREGINET Complete Scraper (Popup Close + guideLineSearchDiv)...");
 
     const browser = await puppeteer.launch({
-        headless: false, // Visible Chrome window
+        headless: false, // Visible Chrome browser window
         defaultViewport: null,
         args: [
             '--no-sandbox',
@@ -20,58 +20,56 @@ async function runScraper() {
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     try {
-        console.log("1️⃣ Navigating to Guideline Value Search Page...");
-        await page.goto('https://tnreginet.gov.in/portal/GuidelineValueSearch.do?UserLocaleID=ta', { 
+        console.log("1️⃣ Opening Homepage...");
+        await page.goto('https://tnreginet.gov.in/portal/?UserLocaleID=ta', { 
             waitUntil: 'domcontentloaded', 
             timeout: 120000 
-        }).catch(async () => {
-            await page.goto('https://tnreginet.gov.in/portal/GuidelineValue.do?UserLocaleID=ta', { waitUntil: 'domcontentloaded' });
         });
 
-        console.log("2️⃣ Waiting for Search Form...");
-        await page.waitForSelector('#districtList, select', { timeout: 30000 });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 3000));
 
-        // Ensure "Street" and "Village-wise" radio buttons are checked
+        // Close initial modal popup overlays if present
+        console.log("❌ Closing initial announcement popup overlay if present...");
         await page.evaluate(() => {
-            const radios = document.querySelectorAll('input[type="radio"]');
-            if (radios.length > 0) radios[0].click();
-            const villageRadio = Array.from(radios).find(r => (r.nextSibling?.textContent || r.parentElement?.textContent || '').includes('கிராம'));
-            if (villageRadio) villageRadio.click();
+            const closeBtns = Array.from(document.querySelectorAll('button, a, span, div, input, i'))
+                .filter(el => {
+                    const txt = (el.innerText || el.value || '').trim();
+                    const cls = String(el.className || '');
+                    return txt === '×' || txt === 'X' || txt.includes('மூடுக') || txt.includes('Close') || cls.includes('close') || cls.includes('modal');
+                });
+            closeBtns.forEach(b => { try { b.click(); } catch(e){} });
         });
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // 3. Select Zone (சேலம் / Salem) by ID #districtList
-        console.log("3️⃣ Selecting Zone: சேலம்...");
-        await page.evaluate(() => {
+        // 2. Select Zone (சேலம் / Salem)
+        console.log("2️⃣ Selecting Zone: சேலம்...");
+        const zoneVal = await page.evaluate(() => {
             const zEl = document.getElementById('districtList') || document.querySelectorAll('select')[0];
-            if (!zEl) return;
             const opt = Array.from(zEl.options).find(o => o.text.includes('சேலம்'));
-            if (opt) {
-                zEl.value = opt.value;
-                zEl.dispatchEvent(new Event('change'));
-            }
+            return opt ? opt.value : null;
         });
 
+        if (zoneVal) {
+            await page.select('#districtList', zoneVal);
+        }
         await new Promise(r => setTimeout(r, 4000));
 
-        // 4. Select SRO by ID #SROList
-        console.log("4️⃣ Selecting SRO: பெத்தநாயக்கன்பாளையம்...");
-        await page.evaluate(() => {
+        // 3. Select SRO (பெத்தநாயக்கன்பாளையம்)
+        console.log("3️⃣ Selecting SRO: பெத்தநாயக்கன்பாளையம்...");
+        const sroVal = await page.evaluate(() => {
             const sEl = document.getElementById('SROList') || document.querySelectorAll('select')[1];
-            if (!sEl) return;
             const opt = Array.from(sEl.options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
                         Array.from(sEl.options).find(o => o.value !== '-1' && o.value !== '' && o.value !== '0');
-            if (opt) {
-                sEl.value = opt.value;
-                sEl.dispatchEvent(new Event('change'));
-            }
+            return opt ? opt.value : null;
         });
 
+        if (sroVal) {
+            await page.select('#SROList', sroVal);
+        }
         await new Promise(r => setTimeout(r, 4000));
 
-        // 5. Get Villages by ID #villageList
+        // 4. Get Villages
         const villageOptions = await page.evaluate(() => {
             const vEl = document.getElementById('villageList') || document.querySelectorAll('select')[2];
             if (!vEl) return [];
@@ -80,7 +78,7 @@ async function runScraper() {
                 .map(opt => ({ text: opt.text.trim(), value: opt.value }));
         });
 
-        console.log(`🤖 Successfully loaded ${villageOptions.length} villages!`);
+        console.log(`🤖 Loaded ${villageOptions.length} villages!`);
 
         if (villageOptions.length === 0) {
             console.log("⚠️ No villages found. Exiting.");
@@ -88,35 +86,37 @@ async function runScraper() {
             return;
         }
 
-        // Test village 1
         const testVillage = villageOptions[0];
-        console.log(`⏳ Testing village 1: ${testVillage.text} (ID: ${testVillage.value})...`);
+        console.log(`⏳ Selecting village 1: ${testVillage.text} (ID: ${testVillage.value})...`);
 
-        // Select 1st village
-        await page.evaluate((val) => {
-            const vEl = document.getElementById('villageList') || document.querySelectorAll('select')[2];
-            if (vEl) {
-                vEl.value = val;
-                vEl.dispatchEvent(new Event('change'));
+        await page.select('#villageList', testVillage.value);
+        await new Promise(r => setTimeout(r, 3000));
+
+        // 5. Submit Form via guideLineSearchDiv() or "சமர்ப்பிக்க" button
+        console.log("5️⃣ Triggering guideLineSearchDiv() / 'சமர்ப்பிக்க' button...");
+        const searchTriggered = await page.evaluate(() => {
+            if (typeof guideLineSearchDiv === 'function') {
+                guideLineSearchDiv();
+                return 'executed guideLineSearchDiv()';
             }
-        }, testVillage.value);
-
-        await new Promise(r => setTimeout(r, 2000));
-
-        // Click Search
-        console.log("5️⃣ Clicking Search button...");
-        const searchClicked = await page.evaluate(() => {
-            const btn = Array.from(document.querySelectorAll('input, button, a'))
-                .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
+            const btn = Array.from(document.querySelectorAll('button, input, a'))
+                .find(b => (b.innerText || b.value || '').trim() === 'சமர்ப்பிக்க');
             if (btn) {
                 btn.click();
-                return true;
+                return 'clicked சமர்ப்பிக்க button';
             }
             return false;
         });
 
-        console.log(`Search button clicked: ${searchClicked}`);
-        await new Promise(r => setTimeout(r, 7000));
+        console.log(`Search status: ${searchTriggered}`);
+
+        // Wait for AJAX table insertion into DOM
+        console.log("⏳ Waiting for AJAX results table to render in DOM...");
+        await page.waitForFunction(() => {
+            return document.querySelectorAll('tr').length > 2 || document.body.innerText.includes('வரிசை');
+        }, { timeout: 15000 }).catch(e => console.log("Timed out waiting for table rows."));
+
+        await new Promise(r => setTimeout(r, 3000));
 
         // Extract records from table
         const records = await page.evaluate((vName) => {
@@ -124,15 +124,15 @@ async function runScraper() {
             const list = [];
 
             allTrs.forEach((row) => {
-                const cols = row.querySelectorAll('td');
-                if (cols.length >= 4) {
+                const cols = row.querySelectorAll('td, th');
+                if (cols.length >= 3) {
                     let col0 = cols[0]?.innerText.trim() || '';
                     let col1 = cols[1]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
                     let col2 = cols[2]?.innerText.trim() || '';
                     let col3 = cols[3]?.innerText.trim() || '';
                     let col4 = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
 
-                    if (col0 !== 'வரிசை எண்' && col1 !== '' && !col1.includes('தேடல்')) {
+                    if (col1 !== '' && !col1.includes('தேடல்') && !col1.includes('மண்டலம்')) {
                         list.push(`"${vName}","${col1}","${col4}","${col2}","${col3}"`);
                     }
                 }
@@ -140,7 +140,7 @@ async function runScraper() {
             return list;
         }, testVillage.text);
 
-        console.log(`\n✅ Test Village Extraction Result: ${records.length} records extracted!`);
+        console.log(`\n🎉 Extracted ${records.length} records for ${testVillage.text}!`);
         if (records.length > 0) {
             console.log("Sample Extracted Data:");
             records.forEach(r => console.log(`  -> ${r}`));
@@ -149,8 +149,8 @@ async function runScraper() {
     } catch (err) {
         console.error("❌ Scraper error:", err);
     } finally {
-        console.log("\nLeaving Chrome open for 10 seconds...");
-        await new Promise(r => setTimeout(r, 10000));
+        console.log("\nLeaving Chrome open for 15 seconds so you can watch Chrome on screen...");
+        await new Promise(r => setTimeout(r, 15000));
         await browser.close();
     }
 }
