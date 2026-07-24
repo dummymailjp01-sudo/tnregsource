@@ -1,11 +1,23 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
+function parseOptionsFromXML(xmlString) {
+    const regex = /<option value=['"]([^'"]+)['"]>([^<]+)<\/option>/g;
+    const options = [];
+    let match;
+    while ((match = regex.exec(xmlString)) !== null) {
+        if (match[1] !== '-1' && match[1] !== '') {
+            options.push({ value: match[1], text: match[2].trim() });
+        }
+    }
+    return options;
+}
+
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Scraper with webHP XHR Interception...");
+    console.log("🚀 Starting TNREGINET Targeted Scraper...");
 
     const browser = await puppeteer.launch({
-        headless: false, // Visible Chrome browser window
+        headless: false, // Visible Chrome window
         defaultViewport: null,
         args: [
             '--no-sandbox',
@@ -19,18 +31,16 @@ async function runScraper() {
     const page = pages.length > 0 ? pages[0] : await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-    // Array to hold XHR responses intercepted from webHP
-    let capturedResponses = [];
+    let capturedXmls = [];
 
-    // Intercept all network responses from the server
+    // Intercept webHP XML responses
     page.on('response', async (response) => {
         const url = response.url();
         if (url.includes('webHP') || url.includes('GuidelineValue')) {
             try {
                 const text = await response.text();
-                if (text && text.length > 50) {
-                    capturedResponses.push({ url, text });
-                    console.log(`📡 [INTERCEPTED webHP XHR] Size: ${text.length} chars | Snippet: "${text.substring(0, 120).replace(/\n/g, ' ')}"`);
+                if (text && text.includes('<option')) {
+                    capturedXmls.push(text);
                 }
             } catch (e) {}
         }
@@ -56,7 +66,7 @@ async function runScraper() {
         });
 
         await new Promise(r => setTimeout(r, 4000));
-        await page.waitForSelector('select', { timeout: 30000 });
+        await page.waitForSelector('#cmb_zone, select', { timeout: 30000 });
 
         // Ensure "Street" and "Village-wise" radio buttons are checked
         await page.evaluate(() => {
@@ -68,42 +78,56 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // 3. Select Zone (சேலம் / Salem)
+        // 3. Select Zone (சேலம் / Salem) by ID #cmb_zone
         console.log("3️⃣ Selecting Zone (சேலம்)...");
         await page.evaluate(() => {
-            const selects = document.querySelectorAll('select');
-            if (!selects[0]) return;
-            const opt = Array.from(selects[0].options).find(o => o.text.includes('சேலம்'));
+            const zEl = document.getElementById('cmb_zone') || document.querySelectorAll('select')[0];
+            if (!zEl) return;
+            const opt = Array.from(zEl.options).find(o => o.text.includes('சேலம்'));
             if (opt) {
-                selects[0].value = opt.value;
-                selects[0].dispatchEvent(new Event('change'));
+                zEl.value = opt.value;
+                zEl.dispatchEvent(new Event('change'));
             }
         });
 
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 5000));
 
-        // 4. Select SRO (Sub-Registrar Office)
-        console.log("4️⃣ Selecting Sub-Registrar Office...");
+        // 4. Select SRO by ID #cmb_sub_registrar_office
+        console.log("4️⃣ Selecting Sub-Registrar Office (பெத்தநாயக்கன்பாளையம்)...");
+        capturedXmls = []; // Clear XML buffer to capture village XML
+        
         await page.evaluate(() => {
-            const selects = document.querySelectorAll('select');
-            if (!selects[1]) return;
-            const opt = Array.from(selects[1].options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
-                        Array.from(selects[1].options).find(o => o.value !== '-1' && o.value !== '');
+            const sEl = document.getElementById('cmb_sub_registrar_office') || document.querySelectorAll('select')[1];
+            if (!sEl) return;
+            const opt = Array.from(sEl.options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || 
+                        Array.from(sEl.options).find(o => o.value !== '-1' && o.value !== '');
             if (opt) {
-                selects[1].value = opt.value;
-                selects[1].dispatchEvent(new Event('change'));
+                sEl.value = opt.value;
+                sEl.dispatchEvent(new Event('change'));
             }
         });
 
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 5000));
 
-        // 5. Extract Village Options
-        const selects = await page.$$('select');
-        const villageOptions = await page.evaluate(el => {
-            return Array.from(el.options)
+        // 5. Get Villages from DOM (#cmb_reg_village) OR from Intercepted XML
+        let villageOptions = await page.evaluate(() => {
+            const vEl = document.getElementById('cmb_reg_village') || document.querySelectorAll('select')[2];
+            if (!vEl) return [];
+            return Array.from(vEl.options)
                 .filter(opt => opt.value !== '-1' && opt.value !== '')
                 .map(opt => ({ text: opt.text.trim(), value: opt.value }));
-        }, selects[2]);
+        });
+
+        // Fallback: Parse XML if DOM is not updated
+        if (villageOptions.length === 0 && capturedXmls.length > 0) {
+            console.log("📡 Extracting villages directly from intercepted XML response...");
+            for (let xml of capturedXmls) {
+                const parsed = parseOptionsFromXML(xml);
+                if (parsed.length > villageOptions.length) {
+                    villageOptions = parsed;
+                }
+            }
+        }
 
         console.log(`🤖 Found ${villageOptions.length} total villages. Testing ONLY Village 1...`);
 
@@ -116,15 +140,12 @@ async function runScraper() {
         const testVillage = villageOptions[0];
         console.log(`⏳ Testing village 1: ${testVillage.text} (Value: ${testVillage.value})...`);
 
-        // Clear captured responses buffer
-        capturedResponses = [];
-
         // Select 1st village
         await page.evaluate((val) => {
-            const selects = document.querySelectorAll('select');
-            if (!selects[2]) return;
-            selects[2].value = val;
-            selects[2].dispatchEvent(new Event('change'));
+            const vEl = document.getElementById('cmb_reg_village') || document.querySelectorAll('select')[2];
+            if (!vEl) return;
+            vEl.value = val;
+            vEl.dispatchEvent(new Event('change'));
         }, testVillage.value);
 
         await new Promise(r => setTimeout(r, 2000));
@@ -141,13 +162,9 @@ async function runScraper() {
         });
 
         console.log(`Search button clicked: ${searchClicked}`);
+        await new Promise(r => setTimeout(r, 7000));
 
-        // Wait 6 seconds for webHP XHR responses to arrive
-        await new Promise(r => setTimeout(r, 6000));
-
-        console.log(`\n📊 Intercepted ${capturedResponses.length} webHP XHR responses during search.`);
-
-        // Parse records from DOM OR from intercepted XHR responses
+        // Extract records from table
         const records = await page.evaluate((vName) => {
             const allTrs = document.querySelectorAll('tr');
             const list = [];
