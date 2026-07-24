@@ -1,0 +1,10 @@
+{
+  "url": "https://tnreginet.gov.in/portal/index.jsp",
+  "selectsInfo": [
+    "Select [0] (id=\"districtList\", name=\"dr\"): 39 options -> Selected: \"சேலம்\"",
+    "Select [1] (id=\"SROList\", name=\"sro\"): 26 options -> Selected: \"பெத்தநாயக்கன்பாளையம்\"",
+    "Select [2] (id=\"villageList\", name=\"village\"): 40 options -> Selected: \"தெரிவு செய்க\"",
+    "Select [3] (id=\"sro\", name=\"sro\"): 596 options -> Selected: \"தெரிவு செய்க\""
+  ],
+  "bodySnippet": "பதிவுத்துறை தொடர்பான புகார்கள் மற்றும் விளக்கங்கள் 9498452110 / 9498452120 / 9498452130\nமென்பொருள் தொடர்பான சந்தேகங்களுக்கு: 1800 102 5174\nதிரை வாசிப்பாளர்\n page\nEnglish\nTo decrease font size click \nஅ-\nTo increase font size click \nஅ\nTo increase font size click \nஅ+\nபதிவுத்துறை\nசேவைகள்\nமற்றவை\nஉதவி\nஉங்கள் கருத்து\nபயனர் பதிவு\nஉள்நுழைவு\n×\nAccess Registration Department services easily through the TNREG"
+}
