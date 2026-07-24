@@ -14,10 +14,10 @@ function parseOptionsFromXML(xmlString) {
 }
 
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Targeted Scraper...");
+    console.log("🚀 Starting TNREGINET Direct-URL Scraper...");
 
     const browser = await puppeteer.launch({
-        headless: false, // Visible Chrome window
+        headless: false, // Visible Chrome browser window
         defaultViewport: null,
         args: [
             '--no-sandbox',
@@ -47,26 +47,19 @@ async function runScraper() {
     });
 
     try {
-        console.log("1️⃣ Navigating to TNREGINET Portal Homepage...");
-        await page.goto('https://tnreginet.gov.in/portal/?UserLocaleID=ta', { 
+        // Direct URL to Guideline Value Search Page (Bypasses homepage completely!)
+        console.log("1️⃣ Navigating DIRECTLY to Guideline Value Search Page...");
+        await page.goto('https://tnreginet.gov.in/portal/GuidelineValueSearch.do?UserLocaleID=ta', { 
             waitUntil: 'domcontentloaded', 
             timeout: 120000 
+        }).catch(async () => {
+            // Fallback URL if Search.do redirects
+            await page.goto('https://tnreginet.gov.in/portal/GuidelineValue.do?UserLocaleID=ta', { waitUntil: 'domcontentloaded' });
         });
 
-        console.log("2️⃣ Navigating to Guideline Value Search...");
-        await new Promise(r => setTimeout(r, 3000));
-
-        await page.evaluate(() => {
-            const allElements = Array.from(document.querySelectorAll('a, button, span, td, div'));
-            const match = allElements.find(el => {
-                const txt = (el.innerText || '').trim();
-                return txt === 'வழிகாட்டி மதிப்பு' || txt.includes('வழிகாட்டி மதிப்பு விவரம்');
-            });
-            if (match) match.click();
-        });
-
-        await new Promise(r => setTimeout(r, 4000));
+        console.log("2️⃣ Waiting for Search Form Dropdowns...");
         await page.waitForSelector('select', { timeout: 30000 });
+        console.log("✅ Successfully landed DIRECTLY on Guideline Value Search Form!");
 
         // Ensure "Street" and "Village-wise" radio buttons are checked
         await page.evaluate(() => {
@@ -78,7 +71,7 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // 3. Select Zone (சேலம் / Salem) by ID #cmb_zone or 1st select
+        // 3. Select Zone (சேலம் / Salem)
         console.log("3️⃣ Selecting Zone (சேலம்)...");
         await page.evaluate(() => {
             const zEl = document.getElementById('cmb_zone') || document.querySelectorAll('select')[0];
@@ -93,7 +86,7 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 5000));
 
-        // 4. Select SRO by ID #cmb_sub_registrar_office
+        // 4. Select SRO (Sub-Registrar Office)
         console.log("4️⃣ Selecting Sub-Registrar Office (பெத்தநாயக்கன்பாளையம்)...");
         capturedXmls = []; // Clear XML buffer to capture village XML
         
