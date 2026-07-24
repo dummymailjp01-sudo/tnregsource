@@ -1,0 +1,4 @@
+node_modules/
+*.csv
+tnreginet_data.json
+.DS_Store
