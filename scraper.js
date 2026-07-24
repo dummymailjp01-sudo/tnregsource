@@ -4,18 +4,20 @@ const fs = require('fs');
 async function runScraper() {
     console.log("🚀 Starting TNREGINET Scraper...");
 
+    // Launch Chrome in visible mode so you can see it working!
     const browser = await puppeteer.launch({
-        headless: true, // Set to false if you want to watch the browser window
+        headless: false, 
+        defaultViewport: null,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-web-security'
+            '--start-maximized'
         ]
     });
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    const pages = await browser.pages();
+    const page = pages.length > 0 ? pages[0] : await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     try {
@@ -80,34 +82,45 @@ async function runScraper() {
             const currentVillage = villageOptions[i];
             console.log(`⏳ [${i + 1}/${villageOptions.length}] Extracting: ${currentVillage.text}...`);
 
-            // Check if we are currently on the Results View and need to click "Go Back" to search form
-            await page.evaluate(() => {
+            // Step A: If we are on the Results page, navigate back to Search Form
+            const hasBackBtn = await page.evaluate(() => {
                 const backBtn = Array.from(document.querySelectorAll('input, button, a'))
                     .find(b => (b.value || b.innerText || '').includes('முதன்மை பட்டியலுக்கு'));
-                if (backBtn) backBtn.click();
+                return !!backBtn;
             });
-            await new Promise(r => setTimeout(r, 3000));
 
-            // Ensure Zone & SRO selections are intact
-            await page.evaluate(() => {
-                const selects = document.querySelectorAll('select');
-                if (selects[0] && selects[0].selectedIndex <= 0) {
-                    const zOpt = Array.from(selects[0].options).find(o => o.text.includes('சேலம்'));
-                    if (zOpt) { selects[0].value = zOpt.value; selects[0].dispatchEvent(new Event('change')); }
-                }
-            });
-            await new Promise(r => setTimeout(r, 2000));
+            if (hasBackBtn) {
+                await Promise.all([
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+                    page.evaluate(() => {
+                        const backBtn = Array.from(document.querySelectorAll('input, button, a'))
+                            .find(b => (b.value || b.innerText || '').includes('முதன்மை பட்டியலுக்கு'));
+                        if (backBtn) backBtn.click();
+                    })
+                ]);
+                await new Promise(r => setTimeout(r, 3000));
 
-            await page.evaluate(() => {
-                const selects = document.querySelectorAll('select');
-                if (selects[1] && selects[1].selectedIndex <= 0) {
-                    const sOpt = Array.from(selects[1].options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || selects[1].options[1];
-                    if (sOpt) { selects[1].value = sOpt.value; selects[1].dispatchEvent(new Event('change')); }
-                }
-            });
-            await new Promise(r => setTimeout(r, 2000));
+                // Re-verify Zone and SRO dropdown selections
+                await page.evaluate(() => {
+                    const selects = document.querySelectorAll('select');
+                    if (selects[0] && selects[0].selectedIndex <= 0) {
+                        const zOpt = Array.from(selects[0].options).find(o => o.text.includes('சேலம்'));
+                        if (zOpt) { selects[0].value = zOpt.value; selects[0].dispatchEvent(new Event('change')); }
+                    }
+                });
+                await new Promise(r => setTimeout(r, 2000));
 
-            // Select current village
+                await page.evaluate(() => {
+                    const selects = document.querySelectorAll('select');
+                    if (selects[1] && selects[1].selectedIndex <= 0) {
+                        const sOpt = Array.from(selects[1].options).find(o => o.text.includes('பெத்தநாயக்கன்பாளையம்')) || selects[1].options[1];
+                        if (sOpt) { selects[1].value = sOpt.value; selects[1].dispatchEvent(new Event('change')); }
+                    }
+                });
+                await new Promise(r => setTimeout(r, 2000));
+            }
+
+            // Step B: Select the current village
             const selected = await page.evaluate((val) => {
                 const selects = document.querySelectorAll('select');
                 if (!selects[2]) return false;
@@ -123,43 +136,39 @@ async function runScraper() {
 
             await new Promise(r => setTimeout(r, 1500));
 
-            // Click Search button
-            await page.evaluate(() => {
-                const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
-                    .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
-                if (btn) btn.click();
-            });
+            // Step C: Click Search and wait for page navigation to complete
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {}),
+                page.evaluate(() => {
+                    const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
+                        .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
+                    if (btn) btn.click();
+                })
+            ]);
 
-            // Wait for results page to render
-            await new Promise(r => setTimeout(r, 5000));
+            await new Promise(r => setTimeout(r, 3000));
 
-            // Extract records from the specific results table (header contains 'வரிசை')
+            // Step D: Extract table rows from the Results Page
             const records = await page.evaluate((vName) => {
-                const tables = document.querySelectorAll('table');
-                let resultTable = null;
-                for (let t of tables) {
-                    if (t.innerText.includes('வரிசை')) {
-                        resultTable = t;
-                        break;
-                    }
-                }
-                if (!resultTable) return [];
-
-                const rows = resultTable.querySelectorAll('tr');
+                const rows = document.querySelectorAll('table tr');
                 const list = [];
 
-                Array.from(rows).forEach((row, index) => {
-                    if (index === 0) return; // Skip table header
+                Array.from(rows).forEach((row) => {
                     const cols = row.querySelectorAll('td');
-                    if (cols.length < 5) return;
+                    // Check if this is a data row (has 5 or more columns)
+                    if (cols.length >= 5) {
+                        let col0Text = cols[0]?.innerText.trim() || '';
+                        // Skip header row
+                        if (col0Text.includes('வரிசை') || col0Text.includes('S.No')) return;
 
-                    let street = cols[1]?.innerText.trim().replace(/\n/g, ' ') || '';
-                    let valB = cols[2]?.innerText.trim() || '';
-                    let valM = cols[3]?.innerText.trim() || '';
-                    let cls = cols[4]?.innerText.trim().replace(/\n/g, ' ') || '';
+                        let street = cols[1]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
+                        let valB = cols[2]?.innerText.trim() || '';
+                        let valM = cols[3]?.innerText.trim() || '';
+                        let cls = cols[4]?.innerText.trim().replace(/\r?\n|\r/g, ' ') || '';
 
-                    if (street && street !== 'வரிசை எண்') {
-                        list.push(`"${vName}","${street}","${cls}","${valB}","${valM}"`);
+                        if (street) {
+                            list.push(`"${vName}","${street}","${cls}","${valB}","${valM}"`);
+                        }
                     }
                 });
                 return list;
