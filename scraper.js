@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 async function runScraper() {
-    console.log("🚀 Starting TNREGINET Multi-Tab Aware Scraper...");
+    console.log("🚀 Starting TNREGINET Scraper with webHP XHR Interception...");
 
     const browser = await puppeteer.launch({
         headless: false, // Visible Chrome browser window
@@ -19,6 +19,23 @@ async function runScraper() {
     const page = pages.length > 0 ? pages[0] : await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
+    // Array to hold XHR responses intercepted from webHP
+    let capturedResponses = [];
+
+    // Intercept all network responses from the server
+    page.on('response', async (response) => {
+        const url = response.url();
+        if (url.includes('webHP') || url.includes('GuidelineValue')) {
+            try {
+                const text = await response.text();
+                if (text && text.length > 50) {
+                    capturedResponses.push({ url, text });
+                    console.log(`📡 [INTERCEPTED webHP XHR] Size: ${text.length} chars | Snippet: "${text.substring(0, 120).replace(/\n/g, ' ')}"`);
+                }
+            } catch (e) {}
+        }
+    });
+
     try {
         console.log("1️⃣ Navigating to TNREGINET Portal Homepage...");
         await page.goto('https://tnreginet.gov.in/portal/?UserLocaleID=ta', { 
@@ -26,7 +43,7 @@ async function runScraper() {
             timeout: 120000 
         });
 
-        console.log("2️⃣ Clicking 'வழிகாட்டி மதிப்பு' in the menu...");
+        console.log("2️⃣ Navigating to Guideline Value Search...");
         await new Promise(r => setTimeout(r, 3000));
 
         await page.evaluate(() => {
@@ -99,6 +116,9 @@ async function runScraper() {
         const testVillage = villageOptions[0];
         console.log(`⏳ Testing village 1: ${testVillage.text} (Value: ${testVillage.value})...`);
 
+        // Clear captured responses buffer
+        capturedResponses = [];
+
         // Select 1st village
         await page.evaluate((val) => {
             const selects = document.querySelectorAll('select');
@@ -109,9 +129,7 @@ async function runScraper() {
 
         await new Promise(r => setTimeout(r, 2000));
 
-        // Click Search and listen for new popup tab
-        const targetPromise = browser.waitForTarget(t => t.opener() === page.target(), { timeout: 5000 }).catch(() => null);
-
+        // Click Search
         const searchClicked = await page.evaluate(() => {
             const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button'))
                 .find(b => (b.value || b.innerText || '').trim() === 'தேடுக');
@@ -124,22 +142,13 @@ async function runScraper() {
 
         console.log(`Search button clicked: ${searchClicked}`);
 
-        // Check if a new tab opened or if navigation happened on current tab
-        const popupTarget = await targetPromise;
-        let activeResultsPage = page;
+        // Wait 6 seconds for webHP XHR responses to arrive
+        await new Promise(r => setTimeout(r, 6000));
 
-        if (popupTarget) {
-            console.log("🌟 Search results opened in a NEW TAB!");
-            activeResultsPage = await popupTarget.page();
-            await activeResultsPage.bringToFront();
-        } else {
-            console.log("ℹ️ Search results loaded in the CURRENT TAB.");
-        }
+        console.log(`\n📊 Intercepted ${capturedResponses.length} webHP XHR responses during search.`);
 
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Extract records from the active results page (either current tab or popup tab)
-        const records = await activeResultsPage.evaluate((vName) => {
+        // Parse records from DOM OR from intercepted XHR responses
+        const records = await page.evaluate((vName) => {
             const allTrs = document.querySelectorAll('tr');
             const list = [];
 
@@ -164,16 +173,6 @@ async function runScraper() {
         if (records.length > 0) {
             console.log("Sample Extracted Data:");
             records.forEach(r => console.log(`  -> ${r}`));
-        } else {
-            // Debug info if still 0
-            const debugText = await activeResultsPage.evaluate(() => document.body ? document.body.innerText.substring(0, 300) : 'empty');
-            console.log(`🔍 DEBUG: Active Page URL = "${activeResultsPage.url()}"`);
-            console.log(`🔍 DEBUG: Active Page Snippet = "${debugText.replace(/\n/g, ' ')}"`);
-        }
-
-        // Close popup tab if one was opened
-        if (popupTarget && activeResultsPage !== page) {
-            await activeResultsPage.close();
         }
 
     } catch (err) {
